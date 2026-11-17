@@ -40,11 +40,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      DISCOVERY_APPLICATION_SHA: f1180a5c3e9f679b5b13dfeef7a3a8607658ae7a
+      DISCOVERY_APPLICATION_SHA: f367f261e030b122a092a2cb6e41ba9bc81ba990
     steps:
       - name: Validate immutable application pin
         env:
-          APP_PIN: f1180a5c3e9f679b5b13dfeef7a3a8607658ae7a
+          APP_PIN: f367f261e030b122a092a2cb6e41ba9bc81ba990
         run: |
           python - <<'PY'
           import os, re
@@ -67,7 +67,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: DewayneRandall/investment-research-agent
-          ref: f1180a5c3e9f679b5b13dfeef7a3a8607658ae7a
+          ref: f367f261e030b122a092a2cb6e41ba9bc81ba990
           token: ${{ secrets.APPLICATION_READ_TOKEN }}
           persist-credentials: false
           path: app
@@ -77,7 +77,7 @@ jobs:
       - name: Install pinned reviewed application without state credentials
         working-directory: app
         run: |
-          if ! python -m pip install '.[cloud]' > /tmp/brief-install.log 2>&1; then
+          if ! python -m pip install --editable '.[cloud]' > /tmp/brief-install.log 2>&1; then
             echo 'Pinned application installation failed; no private build output published.'
             exit 1
           fi
