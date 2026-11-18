@@ -7,7 +7,8 @@ are stored in this repository.
 The controller connects to an immutable private-application commit, validates protected
 `main` and the exact-main `cloud-discovery` Environment, then permits manually selected
 checks, read-only snapshot preview, no-send source preparation, or a separately approved
-ciphertext-only import. Import is not authorized by installation and has not run.
+ciphertext-only import and isolated synthetic state acceptance. Import is not authorized
+by installation and has not run.
 
 Semantic extraction and briefing generation belong to **Codex Cloud**. No local model,
 model container, inference provider API, Telegram delivery or active schedule exists
@@ -29,10 +30,16 @@ only the private application repository with Contents **Read-only**. Never put i
 chat or this repository. It is used only for privacy verification/checkout. The pinned
 commit is explicit in the workflow; changing it requires a reviewed controller change.
 
-Do not add state or Telegram credentials yet. Future read-only state acceptance requires
-separate approval and Environment-scoped state key/data-reader credentials. Migration
-requires explicit approval, original ciphertext/markers and independent readback. There
-is no default empty-state creation, backend switch or delivery activation.
+For the authorized synthetic state test, create a separate **private** encrypted-only
+`DewayneRandall/investment-research-data` repository, empty with Actions disabled. Add
+Environment variable `DISCOVERY_STATE_REPOSITORY` naming it, and two separate expiring
+fine-grained data-only tokens as Environment secrets `DISCOVERY_STATE_READ_TOKEN`
+(Contents read) and `DISCOVERY_STATE_WRITE_TOKEN` (Contents read/write). Neither token
+may select the application repository or have other permissions. Never add values to
+chat or Git. Keep backend unset/drive and scheduling disabled. The synthetic test
+receives no production key; leave the existing original key unchanged. Future production
+key provisioning and ciphertext migration require separate approval and complete original
+history verification. There is no implicit bootstrap, backend switch or delivery route.
 
 ## Manual modes
 
@@ -40,6 +47,11 @@ is no default empty-state creation, backend switch or delivery activation.
 - `preview`: read-only rendering from an existing authorized encrypted snapshot.
 - `dry-run`: no-send acquisition on a disposable read-only-state copy; new semantic tasks
   remain explicitly pending for Codex Cloud. No state writer is supplied.
+- `state-test`: exact approval `RUN_SYNTHETIC_STATE_TEST_ONLY`, first attempt only;
+  generated temporary test key, isolated random branch, real encrypted write/readback,
+  fresh-process restart, backup/history/CAS/irreversible checks. Both data credentials
+  are supplied only to this explicit step; no production key or artifacts. Production
+  refs must be absent/unchanged. Test history is ciphertext only and retained privately.
 - `import`: first-attempt, exact-approval/checksum ciphertext import; do not run without
   separate migration authorization.
 

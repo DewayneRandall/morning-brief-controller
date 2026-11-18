@@ -4,7 +4,7 @@ on:
     inputs:
       mode:
         type: choice
-        options: [check, preview, dry-run, import]
+        options: [check, preview, dry-run, state-test, import]
         default: check
       approval:
         type: string
@@ -28,8 +28,10 @@ jobs:
       github.ref == 'refs/heads/main' && github.ref_protected &&
       github.event_name == 'workflow_dispatch' &&
       (inputs.mode == 'check' || inputs.mode == 'preview' ||
-       inputs.mode == 'dry-run' || inputs.mode == 'import') &&
+       inputs.mode == 'dry-run' || inputs.mode == 'state-test' || inputs.mode == 'import') &&
       (inputs.mode != 'dry-run' || inputs.approval == 'APPROVE_NO_SEND_DRY_RUN') &&
+      (inputs.mode != 'state-test' ||
+       (inputs.approval == 'RUN_SYNTHETIC_STATE_TEST_ONLY' && github.run_attempt == 1)) &&
       (inputs.mode != 'import' ||
        (inputs.approval == 'IMPORT_ENCRYPTED_STATE_ONLY' && github.run_attempt == 1 &&
         vars.DISCOVERY_STATE_BACKEND != 'github'))
@@ -40,11 +42,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      DISCOVERY_APPLICATION_SHA: f367f261e030b122a092a2cb6e41ba9bc81ba990
+      DISCOVERY_APPLICATION_SHA: 95296e395fd07e136636d5de87c19e56001898b8
     steps:
       - name: Validate immutable application pin
         env:
-          APP_PIN: f367f261e030b122a092a2cb6e41ba9bc81ba990
+          APP_PIN: 95296e395fd07e136636d5de87c19e56001898b8
         run: |
           python - <<'PY'
           import os, re
@@ -67,7 +69,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: DewayneRandall/investment-research-agent
-          ref: f367f261e030b122a092a2cb6e41ba9bc81ba990
+          ref: 95296e395fd07e136636d5de87c19e56001898b8
           token: ${{ secrets.APPLICATION_READ_TOKEN }}
           persist-credentials: false
           path: app
@@ -86,6 +88,15 @@ jobs:
         env:
           CONTROLLER_METADATA_TOKEN: ${{ github.token }}
         run: python -m investment_research.controller_trust
+      - name: Isolated encrypted state persistence test (synthetic only)
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'state-test'
+        working-directory: app
+        env:
+          DISCOVERY_STATE_REPOSITORY: ${{ vars.DISCOVERY_STATE_REPOSITORY }}
+          DISCOVERY_STATE_TEST_APPROVAL: ${{ inputs.approval }}
+          STATE_TEST_READ_TOKEN: ${{ secrets.DISCOVERY_STATE_READ_TOKEN }}
+          STATE_TEST_WRITE_TOKEN: ${{ secrets.DISCOVERY_STATE_WRITE_TOKEN }}
+        run: python -m investment_research.state_validation
       - name: Read-only private preview (no output of message bodies)
         if: github.event_name == 'workflow_dispatch' && inputs.mode == 'preview'
         working-directory: app
