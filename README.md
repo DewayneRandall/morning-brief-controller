@@ -44,6 +44,11 @@ history verification. There is no implicit bootstrap, backend switch or delivery
 ## Manual modes
 
 - `check`: source checkout and public-controller security checks only.
+- `key-check`: first-attempt approval `VERIFY_ORIGINAL_KEY_ONLY`; decrypts a benign
+  challenge from the authenticated read-only Drive validator using the original
+  Environment key. Prints only compatibility status, never key/plaintext. No data
+  tokens, state reads/writes, key changes or artifacts. No production-key challenge
+  is generated here; provide only the validator's fixed-test-phrase ciphertext.
 - `preview`: read-only rendering from an existing authorized encrypted snapshot.
 - `dry-run`: no-send acquisition on a disposable read-only-state copy; new semantic tasks
   remain explicitly pending for Codex Cloud. No state writer is supplied.

@@ -4,9 +4,12 @@ on:
     inputs:
       mode:
         type: choice
-        options: [check, preview, dry-run, state-test, import]
+        options: [check, key-check, preview, dry-run, state-test, import]
         default: check
       approval:
+        type: string
+        default: ''
+      key_challenge:
         type: string
         default: ''
       snapshot_commit:
@@ -27,9 +30,11 @@ jobs:
       github.repository == 'DewayneRandall/morning-brief-controller' &&
       github.ref == 'refs/heads/main' && github.ref_protected &&
       github.event_name == 'workflow_dispatch' &&
-      (inputs.mode == 'check' || inputs.mode == 'preview' ||
+      (inputs.mode == 'check' || inputs.mode == 'key-check' || inputs.mode == 'preview' ||
        inputs.mode == 'dry-run' || inputs.mode == 'state-test' || inputs.mode == 'import') &&
       (inputs.mode != 'dry-run' || inputs.approval == 'APPROVE_NO_SEND_DRY_RUN') &&
+      (inputs.mode != 'key-check' ||
+       (inputs.approval == 'VERIFY_ORIGINAL_KEY_ONLY' && github.run_attempt == 1)) &&
       (inputs.mode != 'state-test' ||
        (inputs.approval == 'RUN_SYNTHETIC_STATE_TEST_ONLY' && github.run_attempt == 1)) &&
       (inputs.mode != 'import' ||
@@ -88,6 +93,31 @@ jobs:
         env:
           CONTROLLER_METADATA_TOKEN: ${{ github.token }}
         run: python -m investment_research.controller_trust
+      - name: Verify original key compatibility (no state access or writes)
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'key-check'
+        working-directory: app
+        env:
+          DISCOVERY_STATE_KEY: ${{ secrets.DISCOVERY_STATE_KEY }}
+          KEY_CHALLENGE: ${{ inputs.key_challenge }}
+        run: |
+          python - <<'PYCODE'
+          import json, os, re
+          from cryptography.fernet import Fernet
+          status = 1
+          try:
+              challenge = os.environ['KEY_CHALLENGE']
+              if not re.fullmatch(r'[A-Za-z0-9_=-]{80,512}', challenge):
+                  raise ValueError('Invalid challenge')
+              original = Fernet(os.environ['DISCOVERY_STATE_KEY'].encode('ascii'))
+              if original.decrypt(challenge.encode('ascii')) != b'morning-brief-key-check-v1':
+                  raise ValueError('Unexpected challenge')
+              status = 0
+          except Exception:
+              pass
+          print(json.dumps({'status': 'ORIGINAL_KEY_COMPATIBLE' if status == 0 else
+                            'ORIGINAL_KEY_UNAVAILABLE_OR_MISMATCH', 'state_written': False}))
+          raise SystemExit(status)
+          PYCODE
       - name: Isolated encrypted state persistence test (synthetic only)
         if: github.event_name == 'workflow_dispatch' && inputs.mode == 'state-test'
         working-directory: app
