@@ -31,10 +31,17 @@ jobs:
           if set(workflow[True]) != {'workflow_dispatch'}:
               raise SystemExit('Manual-only controller required')
           serialized = str(workflow)
-          for denied in ('docker ', 'LOCAL_INFERENCE', 'OPENAI_API_KEY', 'TELEGRAM_BOT_TOKEN'):
+          for denied in ('docker ', 'LOCAL_INFERENCE', 'OPENAI_API_KEY'):
               if denied in serialized:
-                  raise SystemExit('Unapproved inference/delivery route')
+                  raise SystemExit('Unapproved inference route')
           job = workflow['jobs']['controller']
+          # Telegram credentials: exactly one step, the approval-gated 'deliver' mode.
+          telegram = [s for s in job['steps'] if 'TELEGRAM' in str(s)]
+          if len(telegram) > 1 or telegram and (
+                  telegram[0].get('env', {}).get('BRIEF_DELIVERY_MODE') != 'deliver'
+                  or "inputs.mode == 'deliver'" not in telegram[0].get('if', '')
+                  or 'DELIVER_PREPARED_MORNING_BRIEF' not in job['if']):
+              raise SystemExit('Unapproved delivery route')
           if job['environment'] != 'cloud-discovery' or 'github.ref_protected' not in job['if']:
               raise SystemExit('Protected-main Environment boundary required')
           if 'secrets.' in str(job.get('env', {})):
@@ -43,5 +50,5 @@ jobs:
               if 'checkout@' in step.get('uses', ''):
                   if step['with'].get('persist-credentials') is not False:
                       raise SystemExit('Checkout credentials must not persist')
-          print('Controller-only content and manual no-send routes validated.')
+          print('Controller-only content, manual routes and single gated delivery step validated.')
           PY

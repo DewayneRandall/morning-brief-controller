@@ -4,12 +4,9 @@ on:
     inputs:
       mode:
         type: choice
-        options: [check, key-check, preview, dry-run, state-test, import, handoff-export, handoff-submit, aaa-refresh-export]
+        options: [check, preview, dry-run, state-test, import, handoff-export, handoff-submit, aaa-refresh-export, cycle-prepare, delivery-status, delivery-activate, deliver, delivery-reconcile, portfolio-import]
         default: check
       approval:
-        type: string
-        default: ''
-      key_challenge:
         type: string
         default: ''
       snapshot_commit:
@@ -33,6 +30,10 @@ on:
       refresh_binding:
         type: string
         default: ''
+      delivery_target:
+        description: 'brief-<id> or brief-<id>:<1|2>:<DELIVERED|NOT_DELIVERED> (reconcile)'
+        type: string
+        default: ''
   # NO active cron. Enable only after live acceptance and separate approval.
 permissions:
   contents: read
@@ -45,13 +46,24 @@ jobs:
       github.repository == 'DewayneRandall/morning-brief-controller' &&
       github.ref == 'refs/heads/main' && github.ref_protected &&
       github.event_name == 'workflow_dispatch' &&
-      (inputs.mode == 'check' || inputs.mode == 'key-check' || inputs.mode == 'preview' ||
+      (inputs.mode == 'check' || inputs.mode == 'preview' ||
        inputs.mode == 'dry-run' || inputs.mode == 'state-test' || inputs.mode == 'import' ||
        inputs.mode == 'handoff-export' || inputs.mode == 'handoff-submit' ||
-       inputs.mode == 'aaa-refresh-export') &&
+       inputs.mode == 'aaa-refresh-export' || inputs.mode == 'cycle-prepare' ||
+       inputs.mode == 'delivery-status' || inputs.mode == 'delivery-activate' ||
+       inputs.mode == 'deliver' || inputs.mode == 'delivery-reconcile' ||
+       inputs.mode == 'portfolio-import') &&
+      (inputs.mode != 'portfolio-import' ||
+       (inputs.approval == 'IMPORT_ORIGINAL_PORTFOLIO' && github.run_attempt == 1)) &&
       (inputs.mode != 'dry-run' || inputs.approval == 'APPROVE_NO_SEND_DRY_RUN') &&
-      (inputs.mode != 'key-check' ||
-       (inputs.approval == 'VERIFY_ORIGINAL_KEY_ONLY' && github.run_attempt == 1)) &&
+      (inputs.mode != 'cycle-prepare' ||
+       (inputs.approval == 'PREPARE_MORNING_BRIEF_CYCLE' && github.run_attempt == 1)) &&
+      (inputs.mode != 'delivery-activate' ||
+       (inputs.approval == 'ACTIVATE_BRIEF_DELIVERY' && github.run_attempt == 1)) &&
+      (inputs.mode != 'deliver' ||
+       (inputs.approval == 'DELIVER_PREPARED_MORNING_BRIEF' && github.run_attempt == 1)) &&
+      (inputs.mode != 'delivery-reconcile' ||
+       (inputs.approval == 'RECONCILE_BRIEF_DELIVERY' && github.run_attempt == 1)) &&
       (inputs.mode != 'state-test' ||
        (inputs.approval == 'RUN_SYNTHETIC_STATE_TEST_ONLY' && github.run_attempt == 1)) &&
       (inputs.mode != 'handoff-export' ||
@@ -70,11 +82,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      DISCOVERY_APPLICATION_SHA: 3310ee445d700a1e042ff734eabeb6be5e87472d
+      DISCOVERY_APPLICATION_SHA: 75328a6f7daa724bcb022fd5b672ea1ad2c00d84
     steps:
       - name: Validate immutable application pin
         env:
-          APP_PIN: 3310ee445d700a1e042ff734eabeb6be5e87472d
+          APP_PIN: 75328a6f7daa724bcb022fd5b672ea1ad2c00d84
         run: |
           python - <<'PY'
           import os, re
@@ -97,7 +109,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: DewayneRandall/investment-research-agent
-          ref: 3310ee445d700a1e042ff734eabeb6be5e87472d
+          ref: 75328a6f7daa724bcb022fd5b672ea1ad2c00d84
           token: ${{ secrets.APPLICATION_READ_TOKEN }}
           persist-credentials: false
           path: app
@@ -116,31 +128,6 @@ jobs:
         env:
           CONTROLLER_METADATA_TOKEN: ${{ github.token }}
         run: python -m investment_research.controller_trust
-      - name: Verify original key compatibility (no state access or writes)
-        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'key-check'
-        working-directory: app
-        env:
-          DISCOVERY_STATE_KEY: ${{ secrets.DISCOVERY_STATE_KEY }}
-          KEY_CHALLENGE: ${{ inputs.key_challenge }}
-        run: |
-          python - <<'PYCODE'
-          import json, os, re
-          from cryptography.fernet import Fernet
-          status = 1
-          try:
-              challenge = os.environ['KEY_CHALLENGE']
-              if not re.fullmatch(r'[A-Za-z0-9_=-]{80,512}', challenge):
-                  raise ValueError('Invalid challenge')
-              original = Fernet(os.environ['DISCOVERY_STATE_KEY'].encode('ascii'))
-              if original.decrypt(challenge.encode('ascii')) != b'morning-brief-key-check-v1':
-                  raise ValueError('Unexpected challenge')
-              status = 0
-          except Exception:
-              pass
-          print(json.dumps({'status': 'ORIGINAL_KEY_COMPATIBLE' if status == 0 else
-                            'ORIGINAL_KEY_UNAVAILABLE_OR_MISMATCH', 'state_written': False}))
-          raise SystemExit(status)
-          PYCODE
       - name: Isolated encrypted state persistence test (synthetic only)
         if: github.event_name == 'workflow_dispatch' && inputs.mode == 'state-test'
         working-directory: app
@@ -221,4 +208,65 @@ jobs:
           CODEX_RECIPIENT_SHA256: ${{ inputs.recipient_sha256 }}
           AAA_REFRESH_BINDING: ${{ inputs.refresh_binding }}
         run: python -m investment_research.codex_handoff --mode aaa-refresh-export
-      # No model runtime, provider API, credentials exported to Codex, cron or delivery.
+      - name: Acquire current sources, checkpoint and export encrypted cycle handoff
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'cycle-prepare'
+        working-directory: app
+        env:
+          CYCLE_MODE: prepare
+          CYCLE_APPROVAL: ${{ inputs.approval }}
+          DISCOVERY_STATE_KEY: ${{ secrets.DISCOVERY_STATE_KEY }}
+          DISCOVERY_STATE_REPOSITORY: ${{ vars.DISCOVERY_STATE_REPOSITORY }}
+          DISCOVERY_STATE_READ_TOKEN: ${{ secrets.DISCOVERY_STATE_READ_TOKEN }}
+          DISCOVERY_STATE_WRITE_TOKEN: ${{ secrets.DISCOVERY_STATE_WRITE_TOKEN }}
+          CODEX_RECIPIENT_PUBLIC_KEY: ${{ inputs.recipient_public_key }}
+          CODEX_RECIPIENT_SHA256: ${{ inputs.recipient_sha256 }}
+        run: python -m investment_research.brief_cycle
+      - name: Read delivery ledger status (no send, no write)
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'delivery-status'
+        working-directory: app
+        env:
+          BRIEF_DELIVERY_MODE: status
+          DISCOVERY_STATE_KEY: ${{ secrets.DISCOVERY_STATE_KEY }}
+          DISCOVERY_STATE_REPOSITORY: ${{ vars.DISCOVERY_STATE_REPOSITORY }}
+          DISCOVERY_STATE_READ_TOKEN: ${{ secrets.DISCOVERY_STATE_READ_TOKEN }}
+        run: python -m investment_research.brief_delivery
+      - name: Record owner activation or reconciliation (no send)
+        if: >-
+          github.event_name == 'workflow_dispatch' &&
+          (inputs.mode == 'delivery-activate' || inputs.mode == 'delivery-reconcile')
+        working-directory: app
+        env:
+          BRIEF_DELIVERY_MODE: ${{ inputs.mode == 'delivery-activate' && 'activate' || 'reconcile' }}
+          BRIEF_DELIVERY_APPROVAL: ${{ inputs.approval }}
+          BRIEF_DELIVERY_TARGET: ${{ inputs.delivery_target }}
+          DISCOVERY_STATE_KEY: ${{ secrets.DISCOVERY_STATE_KEY }}
+          DISCOVERY_STATE_REPOSITORY: ${{ vars.DISCOVERY_STATE_REPOSITORY }}
+          DISCOVERY_STATE_WRITE_TOKEN: ${{ secrets.DISCOVERY_STATE_WRITE_TOKEN }}
+        run: python -m investment_research.brief_delivery
+      - name: Deliver the prepared two-message brief (gated, exactly once)
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'deliver'
+        working-directory: app
+        env:
+          BRIEF_DELIVERY_MODE: deliver
+          BRIEF_DELIVERY_APPROVAL: ${{ inputs.approval }}
+          BRIEF_DELIVERY_TARGET: ${{ inputs.delivery_target }}
+          DISCOVERY_STATE_KEY: ${{ secrets.DISCOVERY_STATE_KEY }}
+          DISCOVERY_STATE_REPOSITORY: ${{ vars.DISCOVERY_STATE_REPOSITORY }}
+          DISCOVERY_STATE_WRITE_TOKEN: ${{ secrets.DISCOVERY_STATE_WRITE_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python -m investment_research.brief_delivery
+      - name: Import the sealed ORIGINAL portfolio once (validated, no overwrite)
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'portfolio-import'
+        working-directory: app
+        env:
+          PORTFOLIO_IMPORT_APPROVAL: ${{ inputs.approval }}
+          RECOVERY_COMMIT: ${{ inputs.snapshot_commit }}
+          RECOVERY_SHA256: ${{ inputs.snapshot_sha256 }}
+          DISCOVERY_STATE_KEY: ${{ secrets.DISCOVERY_STATE_KEY }}
+          DISCOVERY_STATE_REPOSITORY: ${{ vars.DISCOVERY_STATE_REPOSITORY }}
+          DISCOVERY_STATE_READ_TOKEN: ${{ secrets.DISCOVERY_STATE_READ_TOKEN }}
+          DISCOVERY_STATE_WRITE_TOKEN: ${{ secrets.DISCOVERY_STATE_WRITE_TOKEN }}
+        run: python -m investment_research.portfolio_recovery
+      # No model runtime, provider API, credentials exported to Codex or active cron.
+      # Telegram credentials exist only in the gated 'deliver' step above.
