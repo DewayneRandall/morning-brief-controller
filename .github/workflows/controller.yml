@@ -82,11 +82,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      DISCOVERY_APPLICATION_SHA: ed08ce086d9aa72e0af184cb3a950906b04f975c
+      DISCOVERY_APPLICATION_SHA: bf633fb4301700204b2be21a5b41079b1c06dae4
     steps:
       - name: Validate immutable application pin
         env:
-          APP_PIN: ed08ce086d9aa72e0af184cb3a950906b04f975c
+          APP_PIN: bf633fb4301700204b2be21a5b41079b1c06dae4
         run: |
           python - <<'PY'
           import os, re
@@ -109,7 +109,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: DewayneRandall/investment-research-agent
-          ref: ed08ce086d9aa72e0af184cb3a950906b04f975c
+          ref: bf633fb4301700204b2be21a5b41079b1c06dae4
           token: ${{ secrets.APPLICATION_READ_TOKEN }}
           persist-credentials: false
           path: app
