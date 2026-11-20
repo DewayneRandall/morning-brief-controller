@@ -41,26 +41,41 @@ receives no production key; leave the existing original key unchanged. Future pr
 key provisioning and ciphertext migration require separate approval and complete original
 history verification. There is no implicit bootstrap, backend switch or delivery route.
 
+For delivery (after separate approval only), add Environment secrets
+`TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` to `cloud-discovery`. They are passed to
+the gated `deliver` step and nowhere else; validation rejects any other use.
+
 ## Manual modes
 
-- `check`: source checkout and public-controller security checks only.
-- `key-check`: first-attempt approval `VERIFY_ORIGINAL_KEY_ONLY`; decrypts a benign
-  challenge from the authenticated read-only Drive validator using the original
-  Environment key. Prints only compatibility status, never key/plaintext. No data
-  tokens, state reads/writes, key changes or artifacts. No production-key challenge
-  is generated here; provide only the validator's fixed-test-phrase ciphertext.
-- `preview`: read-only rendering from an existing authorized encrypted snapshot.
-- `dry-run`: no-send acquisition on a disposable read-only-state copy; new semantic tasks
-  remain explicitly pending for Codex Cloud. No state writer is supplied.
-- `state-test`: exact approval `RUN_SYNTHETIC_STATE_TEST_ONLY`, first attempt only;
-  generated temporary test key, isolated random branch, real encrypted write/readback,
-  fresh-process restart, backup/history/CAS/irreversible checks. Both data credentials
-  are supplied only to this explicit step; no production key or artifacts. Production
-  refs must be absent/unchanged. Test history is ciphertext only and retained privately.
-- `import`: first-attempt, exact-approval/checksum ciphertext import; do not run without
-  separate migration authorization.
+Every mode runs only on protected `main`, in the exact-main `cloud-discovery`
+Environment, against the immutable application pin. Write modes require their exact
+approval phrase and the first run attempt; logs carry fixed status labels only.
 
-Native scheduling tools are visible in the Codex environment, but an unattended Cloud
-run with the required access has not been established. Installation does not authorize
-or create an automation. Existing source completeness, freshness, evidence, identity,
-encryption and receipt checks remain the private application's responsibility.
+- `check`: source checkout and public-controller security checks only.
+- `preview`: read-only rendering from an existing authorized encrypted snapshot.
+- `dry-run`: no-send acquisition on a disposable read-only-state copy.
+- `state-test` / `import`: completed one-time migration tooling; do not rerun without
+  separate authorization.
+- `handoff-export` (`EXPORT_MARKET_TASKS_TO_CODEX`) / `handoff-submit`
+  (`VALIDATE_CODEX_MARKET_SUBMISSIONS`): recipient-encrypted exchange with the AI
+  workspace. Submit validates extractions and, when present, the editorial draft; any
+  rule violation rejects the whole response before a save.
+- `aaa-refresh-export` (`REFRESH_LATEST_AAA_AND_EXPORT`): the used one-time bound refresh.
+- `cycle-prepare` (`PREPARE_MORNING_BRIEF_CYCLE`): acquire all configured sources into
+  a copy, prove existing history unchanged, CAS checkpoint, independent readback and,
+  with a recipient, a fresh encrypted handoff.
+- `delivery-status`: read-only ledger gates (no send, no write).
+- `delivery-activate` (`ACTIVATE_BRIEF_DELIVERY`, `delivery_target=brief-<id>`): owner
+  activation after reviewing the private preview of exactly that brief.
+- `deliver` (`DELIVER_PREPARED_MORNING_BRIEF`): sends the prepared brief's two
+  messages exactly once; the only step that receives Telegram credentials.
+- `delivery-reconcile` (`RECONCILE_BRIEF_DELIVERY`,
+  `delivery_target=brief-<id>:<1|2>:<DELIVERED|NOT_DELIVERED>`): owner-confirmed outcome
+  of an uncertain send, from the chat history. Never guessed or retried automatically.
+- `portfolio-import` (`IMPORT_ORIGINAL_PORTFOLIO`, `snapshot_commit`/`snapshot_sha256` =
+  the owner-pushed `portfolio-recovery` ciphertext commit/checksum): validates the
+  ORIGINAL portfolio bundle and imports it once under `personal/`; never overwrites.
+
+No schedule is active. A future schedule needs BOTH a reviewed cron in this workflow
+and the owner's Environment variable `MORNING_BRIEF_AUTOMATION=enabled`; either alone
+does nothing. Semantic extraction and editorial work remain an AI workspace step.
