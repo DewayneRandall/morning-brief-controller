@@ -4,7 +4,7 @@ on:
     inputs:
       mode:
         type: choice
-        options: [check, key-check, preview, dry-run, state-test, import, handoff-export, handoff-submit]
+        options: [check, key-check, preview, dry-run, state-test, import, handoff-export, handoff-submit, aaa-refresh-export]
         default: check
       approval:
         type: string
@@ -30,6 +30,9 @@ on:
       response_commit:
         type: string
         default: ''
+      refresh_binding:
+        type: string
+        default: ''
   # NO active cron. Enable only after live acceptance and separate approval.
 permissions:
   contents: read
@@ -44,7 +47,8 @@ jobs:
       github.event_name == 'workflow_dispatch' &&
       (inputs.mode == 'check' || inputs.mode == 'key-check' || inputs.mode == 'preview' ||
        inputs.mode == 'dry-run' || inputs.mode == 'state-test' || inputs.mode == 'import' ||
-       inputs.mode == 'handoff-export' || inputs.mode == 'handoff-submit') &&
+       inputs.mode == 'handoff-export' || inputs.mode == 'handoff-submit' ||
+       inputs.mode == 'aaa-refresh-export') &&
       (inputs.mode != 'dry-run' || inputs.approval == 'APPROVE_NO_SEND_DRY_RUN') &&
       (inputs.mode != 'key-check' ||
        (inputs.approval == 'VERIFY_ORIGINAL_KEY_ONLY' && github.run_attempt == 1)) &&
@@ -54,6 +58,8 @@ jobs:
        (inputs.approval == 'EXPORT_MARKET_TASKS_TO_CODEX' && github.run_attempt == 1)) &&
       (inputs.mode != 'handoff-submit' ||
        (inputs.approval == 'VALIDATE_CODEX_MARKET_SUBMISSIONS' && github.run_attempt == 1)) &&
+      (inputs.mode != 'aaa-refresh-export' ||
+       (inputs.approval == 'REFRESH_LATEST_AAA_AND_EXPORT' && github.run_attempt == 1)) &&
       (inputs.mode != 'import' ||
        (inputs.approval == 'IMPORT_ENCRYPTED_STATE_ONLY' && github.run_attempt == 1 &&
         vars.DISCOVERY_STATE_BACKEND != 'github'))
@@ -64,11 +70,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      DISCOVERY_APPLICATION_SHA: 1071d4c3d90a4eb8280857bff21eb1507fe5f317
+      DISCOVERY_APPLICATION_SHA: 3310ee445d700a1e042ff734eabeb6be5e87472d
     steps:
       - name: Validate immutable application pin
         env:
-          APP_PIN: 1071d4c3d90a4eb8280857bff21eb1507fe5f317
+          APP_PIN: 3310ee445d700a1e042ff734eabeb6be5e87472d
         run: |
           python - <<'PY'
           import os, re
@@ -91,7 +97,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: DewayneRandall/investment-research-agent
-          ref: 1071d4c3d90a4eb8280857bff21eb1507fe5f317
+          ref: 3310ee445d700a1e042ff734eabeb6be5e87472d
           token: ${{ secrets.APPLICATION_READ_TOKEN }}
           persist-credentials: false
           path: app
@@ -201,4 +207,18 @@ jobs:
           CODEX_HANDOFF_ID: ${{ inputs.handoff_id }}
           CODEX_RESPONSE_COMMIT: ${{ inputs.response_commit }}
         run: python -m investment_research.codex_handoff --mode submit
+      - name: Refresh one bound official AAA source and export verified encrypted handoff
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'aaa-refresh-export'
+        working-directory: app
+        env:
+          DISCOVERY_STATE_KEY: ${{ secrets.DISCOVERY_STATE_KEY }}
+          DISCOVERY_STATE_REPOSITORY: ${{ vars.DISCOVERY_STATE_REPOSITORY }}
+          DISCOVERY_STATE_READ_TOKEN: ${{ secrets.DISCOVERY_STATE_READ_TOKEN }}
+          DISCOVERY_STATE_WRITE_TOKEN: ${{ secrets.DISCOVERY_STATE_WRITE_TOKEN }}
+          CODEX_HANDOFF_MODE: aaa-refresh-export
+          CODEX_HANDOFF_APPROVAL: ${{ inputs.approval }}
+          CODEX_RECIPIENT_PUBLIC_KEY: ${{ inputs.recipient_public_key }}
+          CODEX_RECIPIENT_SHA256: ${{ inputs.recipient_sha256 }}
+          AAA_REFRESH_BINDING: ${{ inputs.refresh_binding }}
+        run: python -m investment_research.codex_handoff --mode aaa-refresh-export
       # No model runtime, provider API, credentials exported to Codex, cron or delivery.
