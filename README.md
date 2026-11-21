@@ -10,11 +10,10 @@ checks, read-only snapshot preview, no-send source preparation, or a separately 
 ciphertext-only import and isolated synthetic state acceptance. Import is not authorized
 by installation and has not run.
 
-Semantic extraction and briefing generation belong to **Codex**. Codex Cloud cannot
-schedule a repository-environment task, so the unattended path runs the official Codex
-CLI with the owner's ChatGPT-plan login inside the protected `autonomous-cycle` job.
-No local model, model container, paid inference API or automatic Telegram send exists
-here. The manual Codex handoff remains the fallback.
+Semantic extraction and briefing generation belong to **Codex Cloud** (ChatGPT plan, no
+API key): a Codex Cloud task runs `python -m investment_research.codex_cloud_step` against
+the encrypted handoff and publishes a validated, sealed response. No model, paid
+inference API or automatic Telegram brief send runs here.
 
 ## Required settings
 
@@ -43,7 +42,8 @@ history verification. There is no implicit bootstrap, backend switch or delivery
 
 For delivery (after separate approval only), add Environment secrets
 `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` to `cloud-discovery`. They are passed to
-the gated `deliver` step and nowhere else; validation rejects any other use.
+the gated `deliver` step and the owner-command step `telegram-commands` and nowhere
+else; validation rejects any other use.
 
 ## Manual modes
 
@@ -64,13 +64,15 @@ approval phrase and the first run attempt; logs carry fixed status labels only.
 - `cycle-prepare` (`PREPARE_MORNING_BRIEF_CYCLE`): acquire all configured sources into
   a copy, prove existing history unchanged, CAS checkpoint, independent readback and,
   with a recipient, a fresh encrypted handoff.
-- `autonomous-cycle` (`PREPARE_MORNING_BRIEF_CYCLE`): the unattended cycle in one job:
-  acquisition as in `cycle-prepare`, then the AI step by the Codex CLI running as a
-  separate `agent` OS user (no sudo, no state key, tokens or Telegram credentials; it sees
-  only the market-only handoff), then the `handoff-submit` validation and a PREPARED brief.
-  It never sends. The Codex login is the owner's ChatGPT-plan `auth.json` (no paid API):
-  seeded once as Environment secret `CODEX_AUTH_SEED`, then kept Fernet-encrypted on ref
-  `agent-credential` of the private data repository and refreshed after every run.
+- `autonomous-cycle` (`PREPARE_MORNING_BRIEF_CYCLE`): one scheduled-cycle step. If the
+  newest handoff carries a Codex Cloud response for the current state, it is validated
+  exactly like `handoff-submit` and a PREPARED brief is saved; otherwise, when the 72-hour
+  cycle is due, all sources are acquired and a handoff is exported for the persistent Codex
+  Cloud recipient (variables `CODEX_RECIPIENT_PUBLIC_KEY`, `CODEX_RECIPIENT_SHA256`; the
+  private key exists only in the Codex Cloud environment). It never sends.
+- `telegram-commands` (`PROCESS_TELEGRAM_COMMANDS`): applies the owner's private-chat
+  commands (watchlist, own buys/sells, Deep Dive requests) exactly once to the encrypted
+  state. No trades. Replies only with `MORNING_BRIEF_TELEGRAM_REPLIES=enabled`.
 - `delivery-status`: read-only ledger gates (no send, no write).
 - `delivery-activate` (`ACTIVATE_BRIEF_DELIVERY`, `delivery_target=brief-<id>`): owner
   activation after reviewing the private preview of exactly that brief.
@@ -83,8 +85,7 @@ approval phrase and the first run attempt; logs carry fixed status labels only.
   the owner-pushed `portfolio-recovery` ciphertext commit/checksum): validates the
   ORIGINAL portfolio bundle and imports it once under `personal/`; never overwrites.
 
-Schedule: the reviewed 6-hourly cron is inert until the owner sets the Environment
-variable `MORNING_BRIEF_AUTONOMOUS=enabled`; without it every scheduled run is skipped.
-When enabled, only the no-send `autonomous-cycle` steps react to it: one acquisition per
-72-hour cycle, resuming an interrupted AI step within the cycle. Telegram delivery stays
-the separately approved `deliver` mode.
+Schedules are inert until the owner sets the Environment variables:
+`MORNING_BRIEF_AUTONOMOUS=enabled` (6-hourly `autonomous-cycle`: export when due, submit
+when answered) and `MORNING_BRIEF_TELEGRAM=enabled` (15-minute `telegram-commands`).
+Telegram brief delivery stays the separately approved `deliver` mode.
