@@ -39,23 +39,33 @@ jobs:
           if 'schedule' in triggers:
               # A cron alone does nothing: the owner's Environment variable must enable it,
               # and only the unattended no-send cycle step may react to a schedule.
-              gate = "github.event_name == 'schedule' && vars.MORNING_BRIEF_AUTONOMOUS == 'enabled'"
-              if gate not in ' '.join(job['if'].split()):
-                  raise SystemExit('Scheduled runs require the owner automation variable')
+              condition = ' '.join(job['if'].split())
+              crons = {entry['cron'] for entry in workflow[True]['schedule']}
+              gates = {"'23 */6 * * *'": "vars.MORNING_BRIEF_AUTONOMOUS == 'enabled'",
+                       "'7,22,37,52 * * * *'": "vars.MORNING_BRIEF_TELEGRAM == 'enabled'"}
+              if crons != {c.strip("'") for c in gates} or any(
+                      f"github.event.schedule == {cron} && {gate}" not in condition
+                      for cron, gate in gates.items()):
+                  raise SystemExit('Every schedule requires its owner variable')
+              allowed = ('Install audio decoder', 'Scheduled cycle', 'Owner Telegram commands')
               for step in job['steps']:
-                  condition = str(step.get('if', ''))
-                  if "github.event_name == 'schedule'" in condition and not (
-                          step.get('name', '').startswith(('Install audio decoder',
-                                                            'Prepare isolated AI agent',
-                                                            'Unattended cycle'))):
-                      raise SystemExit('Only the no-send unattended cycle may run on schedule')
-          # Telegram credentials: exactly one step, the approval-gated 'deliver' mode.
-          telegram = [s for s in job['steps'] if 'TELEGRAM' in str(s)]
-          if len(telegram) > 1 or telegram and (
-                  telegram[0].get('env', {}).get('BRIEF_DELIVERY_MODE') != 'deliver'
-                  or "inputs.mode == 'deliver'" not in telegram[0].get('if', '')
-                  or 'DELIVER_PREPARED_MORNING_BRIEF' not in job['if']):
+                  if 'schedule' in str(step.get('if', '')) and not step.get(
+                          'name', '').startswith(allowed):
+                      raise SystemExit('Only the no-send cycle and Telegram commands run on schedule')
+          # Telegram credentials: the approval-gated 'deliver' step (briefs) and the owner
+          # command step (replies only to the owner's own commands). Nothing else.
+          telegram = [s for s in job['steps'] if 'TELEGRAM_BOT_TOKEN' in str(s.get('env', {}))]
+          deliver = [s for s in telegram if s.get('env', {}).get('BRIEF_DELIVERY_MODE') == 'deliver']
+          commands = [s for s in telegram if s.get('env', {}).get('TELEGRAM_COMMAND_MODE') == 'process']
+          if len(telegram) != len(deliver) + len(commands) or len(deliver) > 1 or len(commands) > 1:
+              raise SystemExit('Unapproved Telegram route')
+          if deliver and ("inputs.mode == 'deliver'" not in deliver[0].get('if', '')
+                          or 'schedule' in deliver[0].get('if', '')
+                          or 'DELIVER_PREPARED_MORNING_BRIEF' not in job['if']):
               raise SystemExit('Unapproved delivery route')
+          if commands and (commands[0]['run'].strip() != 'python -m investment_research.telegram_commands'
+                           or 'PROCESS_TELEGRAM_COMMANDS' not in job['if']):
+              raise SystemExit('Unapproved Telegram command route')
           if job['environment'] != 'cloud-discovery' or 'github.ref_protected' not in job['if']:
               raise SystemExit('Protected-main Environment boundary required')
           if 'secrets.' in str(job.get('env', {})):
@@ -64,5 +74,5 @@ jobs:
               if 'checkout@' in step.get('uses', ''):
                   if step['with'].get('persist-credentials') is not False:
                       raise SystemExit('Checkout credentials must not persist')
-          print('Controller-only content, manual routes and single gated delivery step validated.')
+          print('Controller-only content, owner-gated schedules and gated Telegram routes validated.')
           PY

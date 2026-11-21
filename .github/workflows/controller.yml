@@ -4,7 +4,7 @@ on:
     inputs:
       mode:
         type: choice
-        options: [check, preview, dry-run, state-test, import, handoff-export, handoff-submit, aaa-refresh-export, cycle-prepare, autonomous-cycle, delivery-status, delivery-activate, deliver, delivery-reconcile, portfolio-import]
+        options: [check, preview, dry-run, state-test, import, handoff-export, handoff-submit, aaa-refresh-export, cycle-prepare, autonomous-cycle, telegram-commands, delivery-status, delivery-activate, deliver, delivery-reconcile, portfolio-import]
         default: check
       approval:
         type: string
@@ -34,12 +34,14 @@ on:
         description: 'brief-<id> or brief-<id>:<1|2>:<DELIVERED|NOT_DELIVERED> (reconcile)'
         type: string
         default: ''
-  # Inert until the OWNER sets Environment variable MORNING_BRIEF_AUTONOMOUS=enabled:
-  # without it every scheduled run is skipped before any step. When enabled, a run
-  # acquires and prepares a validated brief at most once per 72-hour cycle (the
-  # 6-hourly cadence only resumes an interrupted AI step). It never sends Telegram.
+  # Both schedules are inert until the OWNER enables them with Environment variables:
+  # MORNING_BRIEF_AUTONOMOUS=enabled  -> '23 */6': export a cycle handoff when due (once per
+  #   72 h) or submit the Codex Cloud response; never sends Telegram.
+  # MORNING_BRIEF_TELEGRAM=enabled    -> '7,22,37,52': apply owner Telegram commands
+  #   (replies only with MORNING_BRIEF_TELEGRAM_REPLIES=enabled).
   schedule:
     - cron: '23 */6 * * *'
+    - cron: '7,22,37,52 * * * *'
 permissions:
   contents: read
 concurrency:
@@ -50,14 +52,15 @@ jobs:
     if: >-
       github.repository == 'DewayneRandall/morning-brief-controller' &&
       github.ref == 'refs/heads/main' && github.ref_protected &&
-      ((github.event_name == 'schedule' && vars.MORNING_BRIEF_AUTONOMOUS == 'enabled' &&
-        github.run_attempt == 1) ||
+      ((github.event_name == 'schedule' && github.run_attempt == 1 &&
+        ((github.event.schedule == '23 */6 * * *' && vars.MORNING_BRIEF_AUTONOMOUS == 'enabled') ||
+         (github.event.schedule == '7,22,37,52 * * * *' && vars.MORNING_BRIEF_TELEGRAM == 'enabled'))) ||
       (github.event_name == 'workflow_dispatch' &&
       (inputs.mode == 'check' || inputs.mode == 'preview' ||
        inputs.mode == 'dry-run' || inputs.mode == 'state-test' || inputs.mode == 'import' ||
        inputs.mode == 'handoff-export' || inputs.mode == 'handoff-submit' ||
        inputs.mode == 'aaa-refresh-export' || inputs.mode == 'cycle-prepare' ||
-       inputs.mode == 'autonomous-cycle' ||
+       inputs.mode == 'autonomous-cycle' || inputs.mode == 'telegram-commands' ||
        inputs.mode == 'delivery-status' || inputs.mode == 'delivery-activate' ||
        inputs.mode == 'deliver' || inputs.mode == 'delivery-reconcile' ||
        inputs.mode == 'portfolio-import') &&
@@ -68,6 +71,8 @@ jobs:
        (inputs.approval == 'PREPARE_MORNING_BRIEF_CYCLE' && github.run_attempt == 1)) &&
       (inputs.mode != 'autonomous-cycle' ||
        (inputs.approval == 'PREPARE_MORNING_BRIEF_CYCLE' && github.run_attempt == 1)) &&
+      (inputs.mode != 'telegram-commands' ||
+       (inputs.approval == 'PROCESS_TELEGRAM_COMMANDS' && github.run_attempt == 1)) &&
       (inputs.mode != 'delivery-activate' ||
        (inputs.approval == 'ACTIVATE_BRIEF_DELIVERY' && github.run_attempt == 1)) &&
       (inputs.mode != 'deliver' ||
@@ -90,13 +95,13 @@ jobs:
       contents: read
       actions: read
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ (github.event_name == 'schedule' || inputs.mode == 'autonomous-cycle') && 240 || 45 }}
+    timeout-minutes: 45
     env:
-      DISCOVERY_APPLICATION_SHA: f09088d2b0e0971f5a349166bd4770ded247d92b
+      DISCOVERY_APPLICATION_SHA: b5ba7e982e08ab5956d1201c664cb7d44948a7b3
     steps:
       - name: Validate immutable application pin
         env:
-          APP_PIN: f09088d2b0e0971f5a349166bd4770ded247d92b
+          APP_PIN: b5ba7e982e08ab5956d1201c664cb7d44948a7b3
         run: |
           python - <<'PY'
           import os, re
@@ -119,7 +124,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: DewayneRandall/investment-research-agent
-          ref: f09088d2b0e0971f5a349166bd4770ded247d92b
+          ref: b5ba7e982e08ab5956d1201c664cb7d44948a7b3
           token: ${{ secrets.APPLICATION_READ_TOKEN }}
           persist-credentials: false
           path: app
@@ -135,25 +140,12 @@ jobs:
           fi
       - name: Install audio decoder for podcast boundary verification
         if: >-
-          github.event_name == 'schedule' || inputs.mode == 'dry-run' ||
+          github.event.schedule == '23 */6 * * *' || inputs.mode == 'dry-run' ||
           inputs.mode == 'cycle-prepare' || inputs.mode == 'aaa-refresh-export' ||
           inputs.mode == 'autonomous-cycle'
         run: |
           sudo apt-get update -qq > /dev/null
           sudo apt-get install -y -qq --no-install-recommends ffmpeg > /dev/null
-      - name: Prepare isolated AI agent account (no sudo, no secrets)
-        if: github.event_name == 'schedule' || inputs.mode == 'autonomous-cycle'
-        env:
-          CODEX_CLI_VERSION: ${{ vars.CODEX_CLI_VERSION || 'latest' }}
-        run: |
-          sudo useradd --create-home --shell /usr/sbin/nologin agent
-          sudo install -d -m 0711 -o "$(id -u)" /srv/agent-cycle
-          sudo install -d -m 0755 /opt/morning-brief-app
-          sudo cp -a app/. /opt/morning-brief-app/
-          sudo rm -rf /opt/morning-brief-app/.git
-          sudo chmod -R a+rX,go-w /opt/morning-brief-app
-          sudo npm install -g --silent "@openai/codex@${CODEX_CLI_VERSION}" > /dev/null
-          codex --version
       - name: Verify public host, protected main and exact-main Environment policy
         working-directory: app
         env:
@@ -252,8 +244,8 @@ jobs:
           CODEX_RECIPIENT_PUBLIC_KEY: ${{ inputs.recipient_public_key }}
           CODEX_RECIPIENT_SHA256: ${{ inputs.recipient_sha256 }}
         run: python -m investment_research.brief_cycle
-      - name: Unattended cycle - acquire, AI step, validate, prepare (never sends)
-        if: github.event_name == 'schedule' || inputs.mode == 'autonomous-cycle'
+      - name: Scheduled cycle - export handoff when due or submit Codex Cloud response (never sends)
+        if: github.event.schedule == '23 */6 * * *' || inputs.mode == 'autonomous-cycle'
         working-directory: app
         env:
           CYCLE_MODE: prepare
@@ -263,14 +255,23 @@ jobs:
           DISCOVERY_STATE_REPOSITORY: ${{ vars.DISCOVERY_STATE_REPOSITORY }}
           DISCOVERY_STATE_READ_TOKEN: ${{ secrets.DISCOVERY_STATE_READ_TOKEN }}
           DISCOVERY_STATE_WRITE_TOKEN: ${{ secrets.DISCOVERY_STATE_WRITE_TOKEN }}
-          AGENT_CREDENTIAL_SEED: ${{ secrets.CODEX_AUTH_SEED }}
-          AGENT_OS_USER: agent
-          AGENT_HOME: /home/agent
-          AGENT_ROOT: /srv/agent-cycle/run
-          AGENT_APPLICATION_DIR: /opt/morning-brief-app
-        run: |
-          AGENT_PATH="${pythonLocation}/bin:/usr/local/bin:/usr/bin:/bin" \
-            python -m investment_research.autonomous
+          CODEX_RECIPIENT_PUBLIC_KEY: ${{ vars.CODEX_RECIPIENT_PUBLIC_KEY }}
+          CODEX_RECIPIENT_SHA256: ${{ vars.CODEX_RECIPIENT_SHA256 }}
+        run: python -m investment_research.autonomous
+      - name: Owner Telegram commands - watchlist, own transactions, Deep Dive requests (no trades)
+        if: github.event.schedule == '7,22,37,52 * * * *' || inputs.mode == 'telegram-commands'
+        working-directory: app
+        env:
+          TELEGRAM_COMMAND_MODE: process
+          TELEGRAM_APPROVAL: ${{ inputs.approval }}
+          MORNING_BRIEF_AUTOMATION: ${{ github.event_name == 'schedule' && vars.MORNING_BRIEF_TELEGRAM || '' }}
+          TELEGRAM_REPLIES: ${{ vars.MORNING_BRIEF_TELEGRAM_REPLIES }}
+          DISCOVERY_STATE_KEY: ${{ secrets.DISCOVERY_STATE_KEY }}
+          DISCOVERY_STATE_REPOSITORY: ${{ vars.DISCOVERY_STATE_REPOSITORY }}
+          DISCOVERY_STATE_WRITE_TOKEN: ${{ secrets.DISCOVERY_STATE_WRITE_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python -m investment_research.telegram_commands
       - name: Read delivery ledger status (no send, no write)
         if: github.event_name == 'workflow_dispatch' && inputs.mode == 'delivery-status'
         working-directory: app
