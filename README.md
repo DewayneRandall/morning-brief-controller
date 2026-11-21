@@ -10,11 +10,11 @@ checks, read-only snapshot preview, no-send source preparation, or a separately 
 ciphertext-only import and isolated synthetic state acceptance. Import is not authorized
 by installation and has not run.
 
-Semantic extraction and briefing generation belong to **Codex Cloud**. No local model,
-model container, inference provider API, Telegram delivery or active schedule exists
-here. GitHub Actions does not impersonate or launch a Codex model session. Until an
-unattended Codex Cloud execution with the required environment/access is separately
-verified, the operator starts the Codex step manually.
+Semantic extraction and briefing generation belong to **Codex**. Codex Cloud cannot
+schedule a repository-environment task, so the unattended path runs the official Codex
+CLI with the owner's ChatGPT-plan login inside the protected `autonomous-cycle` job.
+No local model, model container, paid inference API or automatic Telegram send exists
+here. The manual Codex handoff remains the fallback.
 
 ## Required settings
 
@@ -64,6 +64,13 @@ approval phrase and the first run attempt; logs carry fixed status labels only.
 - `cycle-prepare` (`PREPARE_MORNING_BRIEF_CYCLE`): acquire all configured sources into
   a copy, prove existing history unchanged, CAS checkpoint, independent readback and,
   with a recipient, a fresh encrypted handoff.
+- `autonomous-cycle` (`PREPARE_MORNING_BRIEF_CYCLE`): the unattended cycle in one job:
+  acquisition as in `cycle-prepare`, then the AI step by the Codex CLI running as a
+  separate `agent` OS user (no sudo, no state key, tokens or Telegram credentials; it sees
+  only the market-only handoff), then the `handoff-submit` validation and a PREPARED brief.
+  It never sends. The Codex login is the owner's ChatGPT-plan `auth.json` (no paid API):
+  seeded once as Environment secret `CODEX_AUTH_SEED`, then kept Fernet-encrypted on ref
+  `agent-credential` of the private data repository and refreshed after every run.
 - `delivery-status`: read-only ledger gates (no send, no write).
 - `delivery-activate` (`ACTIVATE_BRIEF_DELIVERY`, `delivery_target=brief-<id>`): owner
   activation after reviewing the private preview of exactly that brief.
@@ -76,6 +83,8 @@ approval phrase and the first run attempt; logs carry fixed status labels only.
   the owner-pushed `portfolio-recovery` ciphertext commit/checksum): validates the
   ORIGINAL portfolio bundle and imports it once under `personal/`; never overwrites.
 
-No schedule is active. A future schedule needs BOTH a reviewed cron in this workflow
-and the owner's Environment variable `MORNING_BRIEF_AUTOMATION=enabled`; either alone
-does nothing. Semantic extraction and editorial work remain an AI workspace step.
+Schedule: the reviewed 6-hourly cron is inert until the owner sets the Environment
+variable `MORNING_BRIEF_AUTONOMOUS=enabled`; without it every scheduled run is skipped.
+When enabled, only the no-send `autonomous-cycle` steps react to it: one acquisition per
+72-hour cycle, resuming an interrupted AI step within the cycle. Telegram delivery stays
+the separately approved `deliver` mode.

@@ -28,13 +28,27 @@ jobs:
           if files != allowed:
               raise SystemExit('Only reviewed public orchestration files are allowed')
           workflow = yaml.safe_load(Path('.github/workflows/controller.yml').read_text())
-          if set(workflow[True]) != {'workflow_dispatch'}:
-              raise SystemExit('Manual-only controller required')
+          triggers = set(workflow[True])
+          if not triggers <= {'workflow_dispatch', 'schedule'} or 'workflow_dispatch' not in triggers:
+              raise SystemExit('Manual or owner-gated scheduled controller required')
           serialized = str(workflow)
           for denied in ('docker ', 'LOCAL_INFERENCE', 'OPENAI_API_KEY'):
               if denied in serialized:
                   raise SystemExit('Unapproved inference route')
           job = workflow['jobs']['controller']
+          if 'schedule' in triggers:
+              # A cron alone does nothing: the owner's Environment variable must enable it,
+              # and only the unattended no-send cycle step may react to a schedule.
+              gate = "github.event_name == 'schedule' && vars.MORNING_BRIEF_AUTONOMOUS == 'enabled'"
+              if gate not in ' '.join(job['if'].split()):
+                  raise SystemExit('Scheduled runs require the owner automation variable')
+              for step in job['steps']:
+                  condition = str(step.get('if', ''))
+                  if "github.event_name == 'schedule'" in condition and not (
+                          step.get('name', '').startswith(('Install audio decoder',
+                                                            'Prepare isolated AI agent',
+                                                            'Unattended cycle'))):
+                      raise SystemExit('Only the no-send unattended cycle may run on schedule')
           # Telegram credentials: exactly one step, the approval-gated 'deliver' mode.
           telegram = [s for s in job['steps'] if 'TELEGRAM' in str(s)]
           if len(telegram) > 1 or telegram and (
