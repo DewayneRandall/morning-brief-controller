@@ -4,7 +4,7 @@ on:
     inputs:
       mode:
         type: choice
-        options: [check, preview, dry-run, state-test, import, handoff-export, handoff-submit, aaa-refresh-export, cycle-prepare, delivery-status, delivery-activate, deliver, delivery-reconcile, portfolio-import]
+        options: [check, preview, dry-run, state-test, import, handoff-export, handoff-submit, aaa-refresh-export, cycle-prepare, autonomous-cycle, delivery-status, delivery-activate, deliver, delivery-reconcile, portfolio-import]
         default: check
       approval:
         type: string
@@ -34,7 +34,12 @@ on:
         description: 'brief-<id> or brief-<id>:<1|2>:<DELIVERED|NOT_DELIVERED> (reconcile)'
         type: string
         default: ''
-  # NO active cron. Enable only after live acceptance and separate approval.
+  # Inert until the OWNER sets Environment variable MORNING_BRIEF_AUTONOMOUS=enabled:
+  # without it every scheduled run is skipped before any step. When enabled, a run
+  # acquires and prepares a validated brief at most once per 72-hour cycle (the
+  # 6-hourly cadence only resumes an interrupted AI step). It never sends Telegram.
+  schedule:
+    - cron: '23 */6 * * *'
 permissions:
   contents: read
 concurrency:
@@ -45,11 +50,14 @@ jobs:
     if: >-
       github.repository == 'DewayneRandall/morning-brief-controller' &&
       github.ref == 'refs/heads/main' && github.ref_protected &&
-      github.event_name == 'workflow_dispatch' &&
+      ((github.event_name == 'schedule' && vars.MORNING_BRIEF_AUTONOMOUS == 'enabled' &&
+        github.run_attempt == 1) ||
+      (github.event_name == 'workflow_dispatch' &&
       (inputs.mode == 'check' || inputs.mode == 'preview' ||
        inputs.mode == 'dry-run' || inputs.mode == 'state-test' || inputs.mode == 'import' ||
        inputs.mode == 'handoff-export' || inputs.mode == 'handoff-submit' ||
        inputs.mode == 'aaa-refresh-export' || inputs.mode == 'cycle-prepare' ||
+       inputs.mode == 'autonomous-cycle' ||
        inputs.mode == 'delivery-status' || inputs.mode == 'delivery-activate' ||
        inputs.mode == 'deliver' || inputs.mode == 'delivery-reconcile' ||
        inputs.mode == 'portfolio-import') &&
@@ -57,6 +65,8 @@ jobs:
        (inputs.approval == 'IMPORT_ORIGINAL_PORTFOLIO' && github.run_attempt == 1)) &&
       (inputs.mode != 'dry-run' || inputs.approval == 'APPROVE_NO_SEND_DRY_RUN') &&
       (inputs.mode != 'cycle-prepare' ||
+       (inputs.approval == 'PREPARE_MORNING_BRIEF_CYCLE' && github.run_attempt == 1)) &&
+      (inputs.mode != 'autonomous-cycle' ||
        (inputs.approval == 'PREPARE_MORNING_BRIEF_CYCLE' && github.run_attempt == 1)) &&
       (inputs.mode != 'delivery-activate' ||
        (inputs.approval == 'ACTIVATE_BRIEF_DELIVERY' && github.run_attempt == 1)) &&
@@ -74,13 +84,13 @@ jobs:
        (inputs.approval == 'REFRESH_LATEST_AAA_AND_EXPORT' && github.run_attempt == 1)) &&
       (inputs.mode != 'import' ||
        (inputs.approval == 'IMPORT_ENCRYPTED_STATE_ONLY' && github.run_attempt == 1 &&
-        vars.DISCOVERY_STATE_BACKEND != 'github'))
+        vars.DISCOVERY_STATE_BACKEND != 'github'))))
     environment: cloud-discovery
     permissions:
       contents: read
       actions: read
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: ${{ (github.event_name == 'schedule' || inputs.mode == 'autonomous-cycle') && 240 || 45 }}
     env:
       DISCOVERY_APPLICATION_SHA: b90d65e0b277cedc9800270dbe692ebda8a65cbf
     steps:
@@ -123,6 +133,27 @@ jobs:
             echo 'Pinned application installation failed; no private build output published.'
             exit 1
           fi
+      - name: Install audio decoder for podcast boundary verification
+        if: >-
+          github.event_name == 'schedule' || inputs.mode == 'dry-run' ||
+          inputs.mode == 'cycle-prepare' || inputs.mode == 'aaa-refresh-export' ||
+          inputs.mode == 'autonomous-cycle'
+        run: |
+          sudo apt-get update -qq > /dev/null
+          sudo apt-get install -y -qq --no-install-recommends ffmpeg > /dev/null
+      - name: Prepare isolated AI agent account (no sudo, no secrets)
+        if: github.event_name == 'schedule' || inputs.mode == 'autonomous-cycle'
+        env:
+          CODEX_CLI_VERSION: ${{ vars.CODEX_CLI_VERSION || 'latest' }}
+        run: |
+          sudo useradd --create-home --shell /usr/sbin/nologin agent
+          sudo install -d -m 0711 -o "$(id -u)" /srv/agent-cycle
+          sudo install -d -m 0755 /opt/morning-brief-app
+          sudo cp -a app/. /opt/morning-brief-app/
+          sudo rm -rf /opt/morning-brief-app/.git
+          sudo chmod -R a+rX,go-w /opt/morning-brief-app
+          sudo npm install -g --silent "@openai/codex@${CODEX_CLI_VERSION}" > /dev/null
+          codex --version
       - name: Verify public host, protected main and exact-main Environment policy
         working-directory: app
         env:
@@ -221,6 +252,25 @@ jobs:
           CODEX_RECIPIENT_PUBLIC_KEY: ${{ inputs.recipient_public_key }}
           CODEX_RECIPIENT_SHA256: ${{ inputs.recipient_sha256 }}
         run: python -m investment_research.brief_cycle
+      - name: Unattended cycle - acquire, AI step, validate, prepare (never sends)
+        if: github.event_name == 'schedule' || inputs.mode == 'autonomous-cycle'
+        working-directory: app
+        env:
+          CYCLE_MODE: prepare
+          CYCLE_APPROVAL: ${{ inputs.approval }}
+          MORNING_BRIEF_AUTOMATION: ${{ github.event_name == 'schedule' && vars.MORNING_BRIEF_AUTONOMOUS || '' }}
+          DISCOVERY_STATE_KEY: ${{ secrets.DISCOVERY_STATE_KEY }}
+          DISCOVERY_STATE_REPOSITORY: ${{ vars.DISCOVERY_STATE_REPOSITORY }}
+          DISCOVERY_STATE_READ_TOKEN: ${{ secrets.DISCOVERY_STATE_READ_TOKEN }}
+          DISCOVERY_STATE_WRITE_TOKEN: ${{ secrets.DISCOVERY_STATE_WRITE_TOKEN }}
+          AGENT_CREDENTIAL_SEED: ${{ secrets.CODEX_AUTH_SEED }}
+          AGENT_OS_USER: agent
+          AGENT_HOME: /home/agent
+          AGENT_ROOT: /srv/agent-cycle/run
+          AGENT_APPLICATION_DIR: /opt/morning-brief-app
+        run: |
+          AGENT_PATH="${pythonLocation}/bin:/usr/local/bin:/usr/bin:/bin" \
+            python -m investment_research.autonomous
       - name: Read delivery ledger status (no send, no write)
         if: github.event_name == 'workflow_dispatch' && inputs.mode == 'delivery-status'
         working-directory: app
