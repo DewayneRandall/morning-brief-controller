@@ -97,11 +97,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      DISCOVERY_APPLICATION_SHA: b5ba7e982e08ab5956d1201c664cb7d44948a7b3
+      DISCOVERY_APPLICATION_SHA: 22af08a6916b21e0cad001fdff78d6edc0341673
     steps:
       - name: Validate immutable application pin
         env:
-          APP_PIN: b5ba7e982e08ab5956d1201c664cb7d44948a7b3
+          APP_PIN: 22af08a6916b21e0cad001fdff78d6edc0341673
         run: |
           python - <<'PY'
           import os, re
@@ -124,7 +124,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: DewayneRandall/investment-research-agent
-          ref: b5ba7e982e08ab5956d1201c664cb7d44948a7b3
+          ref: 22af08a6916b21e0cad001fdff78d6edc0341673
           token: ${{ secrets.APPLICATION_READ_TOKEN }}
           persist-credentials: false
           path: app
@@ -151,6 +151,31 @@ jobs:
         env:
           CONTROLLER_METADATA_TOKEN: ${{ github.token }}
         run: python -m investment_research.controller_trust
+      - name: Verify configured Cloud handoff recipient (read only)
+        if: >-
+          github.event_name == 'workflow_dispatch' && inputs.mode == 'check' &&
+          inputs.recipient_sha256 != ''
+        working-directory: app
+        env:
+          CODEX_RECIPIENT_PUBLIC_KEY: ${{ vars.CODEX_RECIPIENT_PUBLIC_KEY }}
+          CODEX_RECIPIENT_SHA256: ${{ vars.CODEX_RECIPIENT_SHA256 }}
+          EXPECTED_RECIPIENT_SHA256: ${{ inputs.recipient_sha256 }}
+        run: |
+          python - <<'PYCODE'
+          import hmac
+          import os
+
+          from investment_research.codex_handoff import recipient
+
+          try:
+              fingerprint = os.environ["CODEX_RECIPIENT_SHA256"]
+              recipient(os.environ["CODEX_RECIPIENT_PUBLIC_KEY"], fingerprint)
+              if not hmac.compare_digest(fingerprint, os.environ["EXPECTED_RECIPIENT_SHA256"]):
+                  raise ValueError("Different recipient")
+          except (KeyError, TypeError, ValueError):
+              raise SystemExit("controller_recipient=FAIL") from None
+          print("controller_recipient=PASS")
+          PYCODE
       - name: Isolated encrypted state persistence test (synthetic only)
         if: github.event_name == 'workflow_dispatch' && inputs.mode == 'state-test'
         working-directory: app
