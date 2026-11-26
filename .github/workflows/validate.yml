@@ -37,7 +37,7 @@ jobs:
                   raise SystemExit('Unapproved inference route')
           job = workflow['jobs']['controller']
           if 'schedule' in triggers:
-              # A cron alone does nothing: the owner's Environment variable must enable it,
+              # A cron alone does nothing: the owner's repository variable must enable it,
               # and only the unattended no-send cycle step may react to a schedule.
               condition = ' '.join(job['if'].split())
               crons = {entry['cron'] for entry in workflow[True]['schedule']}
@@ -66,6 +66,18 @@ jobs:
           if commands and (commands[0]['run'].strip() != 'python -m investment_research.telegram_commands'
                            or 'PROCESS_TELEGRAM_COMMANDS' not in job['if']):
               raise SystemExit('Unapproved Telegram command route')
+          if commands and (
+                  commands[0]['env'].get('TELEGRAM_COMMAND_SCOPE') != 'watchlist-and-research'
+                  or "github.event_name == 'workflow_dispatch' && inputs.approval == "
+                     "'PROCESS_TELEGRAM_COMMANDS_WITH_REPLIES'" not in commands[0]['env'].get('TELEGRAM_REPLIES', '')
+                  or "'PROCESS_TELEGRAM_COMMANDS_WITH_REPLIES') && github.run_attempt == 1" not in
+                     ' '.join(job['if'].split())):
+              raise SystemExit('One-time replies require explicit watchlist/research approval')
+          statuses = [s for s in job['steps'] if s.get('env', {}).get('TELEGRAM_COMMAND_MODE') == 'status']
+          if len(statuses) != 1 or set(statuses[0]['env']) != {
+                  'TELEGRAM_COMMAND_MODE', 'DISCOVERY_STATE_KEY',
+                  'DISCOVERY_STATE_REPOSITORY', 'DISCOVERY_STATE_READ_TOKEN'}:
+              raise SystemExit('Telegram status must use the independent read credential only')
           if job['environment'] != 'cloud-discovery' or 'github.ref_protected' not in job['if']:
               raise SystemExit('Protected-main Environment boundary required')
           if 'secrets.' in str(job.get('env', {})):
